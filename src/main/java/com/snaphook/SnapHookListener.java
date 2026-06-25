@@ -296,6 +296,7 @@ public class SnapHookListener implements Listener {
 
         event.setCancelled(true);
         event.setUseItemInHand(Event.Result.DENY);
+        event.setUseInteractedBlock(Event.Result.DENY);
 
         Location eye = player.getEyeLocation();
         Vector dir = eye.getDirection();
@@ -721,8 +722,8 @@ public class SnapHookListener implements Listener {
         Vector dir = eye.getDirection();
         double max = plugin.getMaxDistance();
         if (max < 0) max = UNLIMITED_DISTANCE;
-        RayTraceResult blockHit = player.getWorld().rayTraceBlocks(eye, dir, max + 16, FluidCollisionMode.NEVER, true);
-        double cap = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : max + 16;
+        RayTraceResult blockHit = player.getWorld().rayTraceBlocks(eye, dir, max, FluidCollisionMode.NEVER, true);
+        double cap = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : max;
         RayTraceResult entityHit = player.getWorld().rayTraceEntities(eye, dir, cap, 0.2,
                 e -> isHookableEntity(e, player.getUniqueId()));
         if (entityHit != null) {

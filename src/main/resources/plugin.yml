@@ -7,8 +7,10 @@ description: Snap Hook - grapnel hook anchor, fast pull, skyblock mobility
 commands:
   snaphook:
     description: SnapHook admin command
-    usage: /snaphook give [player]
+    usage: /snaphook give [player] | /snaphook distance <5-64>
     aliases: [snap]
 permissions:
   snaphook.give:
+    default: op
+  snaphook.distance:
     default: op

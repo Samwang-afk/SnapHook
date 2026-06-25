@@ -3,11 +3,14 @@ package com.snaphook;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.FluidCollisionMode;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
@@ -48,6 +51,11 @@ public class SnapHookListener implements Listener {
     private static final double SPRING_K = 0.7;
     private static final double SPRING_DAMP = 0.45;
     private static final double LANDING_ZONE = 4.0;
+    private static final double UNLIMITED_DISTANCE = 512.0;
+    private static final double MAX_PULL_SPEED = 2.35;
+    private static final double MAX_UP_SPEED = 1.35;
+    private static final double MAX_DOWN_SPEED = -1.15;
+    private static final int MAX_ROPE_PARTICLES = 48;
 
     private final SnapHookPlugin plugin;
     private final Map<UUID, Long> cooldowns = new HashMap<>();
@@ -61,6 +69,7 @@ public class SnapHookListener implements Listener {
         Location target;
         UUID targetEntityId;
         double initialDist;
+        double effectiveMaxDistance;
         int totalPullTicks;
         int elapsed;
         int anchoredTicks;
@@ -186,7 +195,7 @@ public class SnapHookListener implements Listener {
             double vRope = curVel.getX() * toTarget.getX() + curVel.getY() * toTarget.getY() + curVel.getZ() * toTarget.getZ();
             Vector ropePart = toTarget.clone().multiply(vRope);
             Vector perpPart = curVel.clone().subtract(ropePart);
-            player.setVelocity(perpPart.add(toTarget.clone().multiply(speed)));
+            player.setVelocity(clampPullVelocity(perpPart.add(toTarget.clone().multiply(speed))));
         } else {
             int pullTick = s.elapsed - ANCHOR_TICKS;
             int totalPull = s.totalPullTicks - ANCHOR_TICKS;
@@ -200,7 +209,7 @@ public class SnapHookListener implements Listener {
             double impulse = Math.max(0.06, springForce - dampingForce);
             Vector ropePart = toTarget.clone().multiply(vRope);
             Vector perpPart = curVel.clone().subtract(ropePart);
-            player.setVelocity(perpPart.add(toTarget.clone().multiply(vRope + impulse)));
+            player.setVelocity(clampPullVelocity(perpPart.add(toTarget.clone().multiply(vRope + impulse))));
         }
 
         spawnRopeLine(player, s.target);
@@ -226,12 +235,12 @@ public class SnapHookListener implements Listener {
         Vector dir = eye.getDirection();
         World world = player.getWorld();
         double maxDist = plugin.getMaxDistance();
-        if (maxDist < 0) maxDist = 512.0;
+        if (maxDist < 0) maxDist = UNLIMITED_DISTANCE;
 
         RayTraceResult blockHit = world.rayTraceBlocks(eye, dir, maxDist, FluidCollisionMode.NEVER, true);
         double maxEntityDist = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : maxDist;
         RayTraceResult entityHit = world.rayTraceEntities(eye, dir, maxEntityDist, 0.2,
-                e -> !e.getUniqueId().equals(uuid));
+                e -> isHookableEntity(e, uuid));
 
         double bDist = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : Double.MAX_VALUE;
         double eDist = entityHit != null ? entityHit.getHitPosition().distance(eye.toVector()) : Double.MAX_VALUE;
@@ -246,9 +255,12 @@ public class SnapHookListener implements Listener {
         HookState s = new HookState();
         s.phase = Phase.ANCHORED;
         s.anchoredTicks = 0;
+        s.effectiveMaxDistance = maxDist;
         if (bDist <= eDist) {
             Vector hv = blockHit.getHitPosition();
-            s.target = hv.toLocation(world).subtract(dir.clone().multiply(TARGET_OFFSET));
+            BlockFace face = blockHit.getHitBlockFace();
+            Vector offset = face != null ? face.getDirection() : dir.clone().multiply(-1);
+            s.target = hv.toLocation(world).add(offset.normalize().multiply(TARGET_OFFSET));
             s.targetIsEntity = false;
             world.playSound(s.target, Sound.BLOCK_CHAIN_PLACE, 1.0f, 1.2f);
             world.playSound(s.target, Sound.ENTITY_ARROW_SHOOT, 0.7f, 1.5f);
@@ -276,12 +288,13 @@ public class SnapHookListener implements Listener {
         Player player = event.getPlayer();
         HookState s = hookStates.get(player.getUniqueId());
         if (s == null) return;
+        event.setCancelled(true);
 
         if (s.phase == Phase.ANCHORED) {
             s.phase = Phase.LAUNCHING;
             s.elapsed = 0;
             s.initialDist = player.getLocation().distance(s.target);
-            double t = Math.min(1.0, Math.max(0.0, s.initialDist / plugin.getMaxDistance()));
+            double t = Math.min(1.0, Math.max(0.0, s.initialDist / s.effectiveMaxDistance));
             s.totalPullTicks = ANCHOR_TICKS + (int)(MIN_PULL_TICKS + (MAX_PULL_TICKS - MIN_PULL_TICKS) * t);
             player.playSound(player.getLocation(), Sound.ITEM_CROSSBOW_SHOOT, 0.6f, 1.8f);
             player.sendActionBar(ChatColor.GREEN + "发射！");
@@ -362,6 +375,19 @@ public class SnapHookListener implements Listener {
         fallProtection.remove(uuid);
     }
 
+    private boolean isHookableEntity(Entity entity, UUID shooter) {
+        if (entity.getUniqueId().equals(shooter) || !(entity instanceof LivingEntity living) || living.isDead()) return false;
+        return !(entity instanceof Player player) || player.getGameMode() != GameMode.SPECTATOR;
+    }
+
+    private Vector clampPullVelocity(Vector velocity) {
+        if (velocity.lengthSquared() > MAX_PULL_SPEED * MAX_PULL_SPEED) {
+            velocity.normalize().multiply(MAX_PULL_SPEED);
+        }
+        velocity.setY(Math.max(MAX_DOWN_SPEED, Math.min(MAX_UP_SPEED, velocity.getY())));
+        return velocity;
+    }
+
     private boolean isOnCooldown(UUID uuid) {
         Long n = cooldowns.get(uuid);
         if (n != null && System.currentTimeMillis() < n) return true;
@@ -393,7 +419,8 @@ public class SnapHookListener implements Listener {
         toTarget.normalize();
         World world = player.getWorld();
         double len = totalDist * progress;
-        for (double d = 0; d <= len; d += 0.2)
+        double step = ropeStep(len);
+        for (double d = 0; d <= len; d += step)
             world.spawnParticle(Particle.END_ROD, origin.clone().add(toTarget.clone().multiply(d)), 1, 0, 0, 0, 0);
         if (progress >= 1.0) world.spawnParticle(Particle.ELECTRIC_SPARK, target, 3, 0.15, 0.15, 0.15, 0);
     }
@@ -405,7 +432,12 @@ public class SnapHookListener implements Listener {
         if (totalDist <= 0) return;
         toTarget.normalize();
         World world = player.getWorld();
-        for (double d = 0; d <= totalDist; d += 0.2)
+        double step = ropeStep(totalDist);
+        for (double d = 0; d <= totalDist; d += step)
             world.spawnParticle(Particle.END_ROD, origin.clone().add(toTarget.clone().multiply(d)), 1, 0, 0, 0, 0);
+    }
+
+    private double ropeStep(double length) {
+        return Math.max(0.85, length / MAX_ROPE_PARTICLES);
     }
 }

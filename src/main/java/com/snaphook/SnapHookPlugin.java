@@ -19,6 +19,10 @@ public final class SnapHookPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         nbtKey = new NamespacedKey(this, PDC_KEY);
+        getConfig().addDefault("max-distance", maxDistance);
+        getConfig().options().copyDefaults(true);
+        maxDistance = clampDistance(getConfig().getDouble("max-distance", maxDistance));
+        saveConfig();
         getServer().getPluginManager().registerEvents(new SnapHookListener(this), this);
         SnapHookCommand command = new SnapHookCommand(this);
         var pluginCommand = getCommand("snaphook");
@@ -30,7 +34,15 @@ public final class SnapHookPlugin extends JavaPlugin {
     }
 
     public double getMaxDistance() { return maxDistance; }
-    public void setMaxDistance(double v) { maxDistance = Math.max(-1.0, Math.min(180.0, v)); }
+    public void setMaxDistance(double v) {
+        maxDistance = clampDistance(v);
+        getConfig().set("max-distance", maxDistance);
+        saveConfig();
+    }
+
+    private double clampDistance(double v) {
+        return v < 0 ? -1.0 : Math.max(5.0, Math.min(180.0, v));
+    }
 
     public ItemStack createSnapHook() {
         ItemStack item = new ItemStack(Material.TRIPWIRE_HOOK);

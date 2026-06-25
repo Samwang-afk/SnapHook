@@ -1,0 +1,14 @@
+name: SnapHook
+version: 1.0.0
+main: com.snaphook.SnapHookPlugin
+api-version: "1.21"
+author: wangm
+description: Snap Hook - grapnel hook anchor, fast pull, skyblock mobility
+commands:
+  snaphook:
+    description: SnapHook admin command
+    usage: /snaphook give [player]
+    aliases: [snap]
+permissions:
+  snaphook.give:
+    default: op

@@ -4,13 +4,3 @@ main: com.snaphook.SnapHookPlugin
 api-version: "1.21"
 author: wangm
 description: Snap Hook - grapnel hook anchor, fast pull, skyblock mobility
-commands:
-  snaphook:
-    description: SnapHook admin command
-    usage: /snaphook give [player] | /snaphook distance <-1|5-180>
-    aliases: [snap]
-permissions:
-  snaphook.give:
-    default: op
-  snaphook.distance:
-    default: op

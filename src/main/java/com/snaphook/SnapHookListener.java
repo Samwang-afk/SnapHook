@@ -159,7 +159,8 @@ public class SnapHookListener implements Listener {
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID uuid = player.getUniqueId();
             if (hookStates.containsKey(uuid) || cooldowns.containsKey(uuid) || failCooldowns.containsKey(uuid)) continue;
-            if (!plugin.isSnapHook(player.getInventory().getItemInMainHand())) continue;
+            if (!plugin.isSnapHook(player.getInventory().getItemInMainHand())
+                    && !plugin.isSnapHook(player.getInventory().getItemInOffHand())) continue;
             double dist = targetDistance(player);
             double max = plugin.getMaxDistance();
             if (max < 0) max = UNLIMITED_DISTANCE;
@@ -286,7 +287,11 @@ public class SnapHookListener implements Listener {
         if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         Player player = event.getPlayer();
         ItemStack item = player.getInventory().getItemInMainHand();
-        if (!plugin.isSnapHook(item)) return;
+        boolean isMainHand = plugin.isSnapHook(item);
+        if (!isMainHand) {
+            item = player.getInventory().getItemInOffHand();
+            if (!plugin.isSnapHook(item)) return;
+        }
         plugin.grantSnapHookAdvancement(player);
         UUID uuid = player.getUniqueId();
         if (!rightClickThisTick.add(uuid)) return;
@@ -301,7 +306,7 @@ public class SnapHookListener implements Listener {
         Location eye = player.getEyeLocation();
         Vector dir = eye.getDirection();
         World world = player.getWorld();
-        double maxDist = plugin.getMaxDistance();
+        double maxDist = player.getLocation().getPitch() > 85 ? UNLIMITED_DISTANCE : plugin.getMaxDistance();
         if (maxDist < 0) maxDist = UNLIMITED_DISTANCE;
 
         RayTraceResult blockHit = world.rayTraceBlocks(eye, dir, maxDist, FluidCollisionMode.NEVER, true);
@@ -720,8 +725,7 @@ public class SnapHookListener implements Listener {
     private double targetDistance(Player player) {
         Location eye = player.getEyeLocation();
         Vector dir = eye.getDirection();
-        double max = plugin.getMaxDistance();
-        if (max < 0) max = UNLIMITED_DISTANCE;
+        double max = UNLIMITED_DISTANCE;
         RayTraceResult blockHit = player.getWorld().rayTraceBlocks(eye, dir, max, FluidCollisionMode.NEVER, true);
         double cap = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : max;
         RayTraceResult entityHit = player.getWorld().rayTraceEntities(eye, dir, cap, 0.2,

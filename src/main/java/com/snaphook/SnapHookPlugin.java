@@ -24,7 +24,7 @@ public final class SnapHookPlugin extends JavaPlugin {
     private NamespacedKey nbtKey;
     private NamespacedKey recipeKey;
     private final Map<String, NamespacedKey> advancementKeys = new HashMap<>();
-    private final double maxDistance = 100.0;
+    private final double maxDistance = 150.0;
     private static final String[][] ADVANCEMENTS = {
             {"snap_hook", "Snap Hook", "钩锁已校准，准备切入战场", "task"},
             {"first_hook", "第一钩", "第一次命中锚点", "task"},

@@ -82,6 +82,7 @@ public class SnapHookListener implements Listener {
     private final Set<UUID> rightClickThisTick = new HashSet<>();
     private final Map<UUID, HookState> hookStates = new HashMap<>();
     private final Map<UUID, Long> fallProtection = new HashMap<>();
+    private final Map<UUID, Integer> escapeCounts = new HashMap<>();
     private enum Phase { FLYING, ANCHORED, LAUNCHING, STRIKE }
 
     private static class HookState {
@@ -161,12 +162,14 @@ public class SnapHookListener implements Listener {
             if (hookStates.containsKey(uuid) || cooldowns.containsKey(uuid) || failCooldowns.containsKey(uuid)) continue;
             if (!plugin.isSnapHook(player.getInventory().getItemInMainHand())
                     && !plugin.isSnapHook(player.getInventory().getItemInOffHand())) continue;
+            boolean entityMode = plugin.isSnapHook(player.getInventory().getItemInMainHand());
             double dist = targetDistance(player);
             double max = plugin.getMaxDistance();
             if (max < 0) max = UNLIMITED_DISTANCE;
-            if (dist <= 0) player.sendActionBar(ChatColor.RED + "距离: 无目标");
-            else if (dist <= max) player.sendActionBar(ChatColor.GREEN + "距离: " + String.format("%.1f", dist) + "格");
-            else player.sendActionBar(ChatColor.RED + "超距: " + String.format("%.1f", dist) + "格");
+            String modeTag = entityMode ? ChatColor.AQUA + "实体" : ChatColor.GOLD + "全能";
+            if (dist <= 0) player.sendActionBar(modeTag + ChatColor.GRAY + " | " + ChatColor.RED + "距离: 无目标");
+            else if (dist <= max) player.sendActionBar(modeTag + ChatColor.GRAY + " | " + ChatColor.GREEN + "距离: " + String.format("%.1f", dist) + "格");
+            else player.sendActionBar(modeTag + ChatColor.GRAY + " | " + ChatColor.RED + "超距: " + String.format("%.1f", dist) + "格");
         }
 
         it = fallProtection.entrySet().iterator();
@@ -308,6 +311,32 @@ public class SnapHookListener implements Listener {
         World world = player.getWorld();
         double maxDist = player.getLocation().getPitch() > 85 ? UNLIMITED_DISTANCE : plugin.getMaxDistance();
         if (maxDist < 0) maxDist = UNLIMITED_DISTANCE;
+        boolean entityMode = isMainHand;
+
+        if (entityMode) {
+            RayTraceResult entityHit = world.rayTraceEntities(eye, dir, maxDist, 0.2,
+                    e -> isHookableEntity(e, uuid));
+            if (entityHit == null) {
+                player.sendActionBar(ChatColor.RED + "实体模式：无有效目标");
+                player.playSound(player.getLocation(), Sound.BLOCK_CHAIN_BREAK, 0.6f, 1.0f);
+                return;
+            }
+            Entity target = entityHit.getHitEntity();
+            if (target == null) return;
+            plugin.damageSnapHook(item, 1);
+            Location pullSpot = player.getLocation().add(player.getLocation().getDirection().multiply(1.0)).add(0, 1, 0);
+            target.teleport(pullSpot);
+            target.setVelocity(new Vector(0, 0, 0));
+            world.playSound(pullSpot, Sound.ENTITY_ARROW_HIT, 0.8f, 1.0f);
+            world.spawnParticle(Particle.CRIT, pullSpot, 10, 0.3, 0.3, 0.3, 0.05);
+            player.sendActionBar(ChatColor.GREEN + "已钩回 " + (target instanceof Player tp ? tp.getName() : target.getName()));
+            if (target instanceof Player targetPlayer) {
+                escapeCounts.put(targetPlayer.getUniqueId(), 0);
+                targetPlayer.sendActionBar(ChatColor.YELLOW + "按3下[Space]脱离, 0/3");
+                targetPlayer.sendMessage(ChatColor.RED + player.getName() + " 用钩索抓住了你！按3下[Space]脱离。");
+            }
+            return;
+        }
 
         RayTraceResult blockHit = world.rayTraceBlocks(eye, dir, maxDist, FluidCollisionMode.NEVER, true);
         double maxEntityDist = blockHit != null ? blockHit.getHitPosition().distance(eye.toVector()) : maxDist;
@@ -327,7 +356,7 @@ public class SnapHookListener implements Listener {
         HookState s = new HookState();
         s.phase = Phase.FLYING;
         s.anchoredTicks = 0;
-        s.hand = event.getHand();
+        s.hand = isMainHand ? EquipmentSlot.HAND : EquipmentSlot.OFF_HAND;
         if (bDist <= eDist) {
             Vector hv = blockHit.getHitPosition();
             BlockFace face = blockHit.getHitBlockFace();
@@ -424,6 +453,7 @@ public class SnapHookListener implements Listener {
     @EventHandler
     public void onJump(PlayerJumpEvent event) {
         Player player = event.getPlayer();
+        if (handleEscapePress(player)) return;
         HookState s = hookStates.get(player.getUniqueId());
         if (s == null) return;
         releasePull(player);
@@ -432,6 +462,7 @@ public class SnapHookListener implements Listener {
     @EventHandler
     public void onToggleFlight(PlayerToggleFlightEvent event) {
         Player player = event.getPlayer();
+        if (handleEscapePress(player)) { event.setCancelled(true); player.setFlying(false); return; }
         HookState s = hookStates.get(player.getUniqueId());
         if (s == null) return;
         event.setCancelled(true);
@@ -544,6 +575,22 @@ public class SnapHookListener implements Listener {
         cooldowns.remove(uuid);
         failCooldowns.remove(uuid);
         fallProtection.remove(uuid);
+        escapeCounts.remove(uuid);
+    }
+
+    private boolean handleEscapePress(Player player) {
+        Integer count = escapeCounts.get(player.getUniqueId());
+        if (count == null) return false;
+        count++;
+        if (count >= 3) {
+            escapeCounts.remove(player.getUniqueId());
+            player.sendActionBar(ChatColor.GREEN + "已脱离！");
+            player.sendMessage(ChatColor.GREEN + "已挣脱钩索。");
+            return true;
+        }
+        escapeCounts.put(player.getUniqueId(), count);
+        player.sendActionBar(ChatColor.YELLOW + "按3下[Space]脱离, " + count + "/3");
+        return true;
     }
 
     private void restoreStateFlight(Player player, HookState s) {

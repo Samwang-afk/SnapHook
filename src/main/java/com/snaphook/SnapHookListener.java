@@ -83,6 +83,7 @@ public class SnapHookListener implements Listener {
     private final Map<UUID, HookState> hookStates = new HashMap<>();
     private final Map<UUID, Long> fallProtection = new HashMap<>();
     private final Map<UUID, Integer> escapeCounts = new HashMap<>();
+    private final Map<UUID, UUID> pullTargetToHooker = new HashMap<>();
     private enum Phase { FLYING, ANCHORED, LAUNCHING, STRIKE }
 
     private static class HookState {
@@ -98,6 +99,7 @@ public class SnapHookListener implements Listener {
         boolean flightWasAllowed;
         boolean hookFlightEnabled;
         boolean targetIsEntity;
+        boolean pullEntity;
         Phase phase;
 
         boolean isAnchoring() { return phase == Phase.LAUNCHING && elapsed < ANCHOR_TICKS; }
@@ -188,6 +190,14 @@ public class SnapHookListener implements Listener {
 
         s.phase = Phase.ANCHORED;
         s.anchoredTicks = 0;
+        if (s.pullEntity) {
+            damageHookedEntity(player, s);
+            player.getWorld().playSound(s.target, Sound.ENTITY_ARROW_HIT, 0.8f, 1.0f);
+            plugin.grantAdvancement(player, "chain_link");
+            spawnAnchorPulse(player, s.target);
+            startLaunch(player, s);
+            return;
+        }
         if (s.targetIsEntity) {
             damageHookedEntity(player, s);
             plugin.grantAdvancement(player, "live_anchor");
@@ -234,6 +244,30 @@ public class SnapHookListener implements Listener {
             if (s.elapsed == 0) player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.8f);
             double beamProgress = (s.elapsed + 1) / (double) ANCHOR_TICKS;
             spawnRopeBeam(player, s.target, beamProgress);
+            s.elapsed++;
+            return;
+        }
+
+        if (s.pullEntity) {
+            Entity target = Bukkit.getEntity(s.targetEntityId);
+            if (target == null || target.isDead() || !target.getWorld().equals(player.getWorld())) { cancelPull(player, s); return; }
+            if (isUnsafe(s.target)) { cancelPull(player, s); return; }
+
+            Vector toPlayer = player.getLocation().toVector().subtract(target.getLocation().toVector());
+            double distance = toPlayer.length();
+            if (distance < ARRIVE_DISTANCE) { endPull(player, s); return; }
+            toPlayer.normalize();
+
+            int pullTick = s.elapsed - ANCHOR_TICKS;
+            double speed = Math.min(MAX_PULL_SPEED, START_PULL_SPEED + pullTick * PULL_ACCEL_PER_TICK);
+            if (distance < LANDING_ZONE) {
+                double t = distance / LANDING_ZONE;
+                double smooth = t * t * (3.0 - 2.0 * t);
+                speed *= Math.max(0.22, smooth);
+            }
+            target.setVelocity(clampPullVelocity(toPlayer.multiply(speed)));
+            player.sendActionBar(ChatColor.AQUA + "拉拽中 " + ChatColor.WHITE + (target instanceof Player tp ? tp.getName() : target.getName()));
+            spawnRopeLine(player, s.target);
             s.elapsed++;
             return;
         }
@@ -323,16 +357,29 @@ public class SnapHookListener implements Listener {
             }
             Entity target = entityHit.getHitEntity();
             if (target == null) return;
+
+            HookState s = new HookState();
+            s.phase = Phase.FLYING;
+            s.pullEntity = true;
+            s.targetEntityId = target.getUniqueId();
+            s.targetIsEntity = true;
+            s.target = target.getLocation().add(0, 1, 0);
+            s.hand = isMainHand ? EquipmentSlot.HAND : EquipmentSlot.OFF_HAND;
+            double dist = eye.distance(s.target);
+            double hookProgress = Math.min(1.0, dist / maxDist);
+            s.totalFlyingTicks = MIN_HOOK_FLIGHT_TICKS + (int) Math.round((MAX_HOOK_FLIGHT_TICKS - MIN_HOOK_FLIGHT_TICKS) * hookProgress);
+            s.flyingTicks = 0;
+            player.playSound(player.getLocation(), Sound.ITEM_CROSSBOW_QUICK_CHARGE_1, 0.6f, 1.6f);
+            hookStates.put(uuid, s);
+            enableHookFlight(player, s);
             plugin.damageSnapHook(item, 1);
-            Location pullSpot = player.getLocation().add(player.getLocation().getDirection().multiply(1.0)).add(0, 1, 0);
-            target.teleport(pullSpot);
-            target.setVelocity(new Vector(0, 0, 0));
-            world.playSound(pullSpot, Sound.ENTITY_ARROW_HIT, 0.8f, 1.0f);
-            world.spawnParticle(Particle.CRIT, pullSpot, 10, 0.3, 0.3, 0.3, 0.05);
-            player.sendActionBar(ChatColor.GREEN + "已钩回 " + (target instanceof Player tp ? tp.getName() : target.getName()));
+            plugin.grantAdvancement(player, "first_hook");
+            plugin.grantAdvancement(player, "live_anchor");
+            if (target instanceof Player) plugin.grantAdvancement(player, "player_anchor");
+            if (!player.isOnGround()) plugin.grantAdvancement(player, "skybridge");
             if (target instanceof Player targetPlayer) {
                 escapeCounts.put(targetPlayer.getUniqueId(), 0);
-                targetPlayer.sendActionBar(ChatColor.YELLOW + "按3下[Space]脱离, 0/3");
+                pullTargetToHooker.put(targetPlayer.getUniqueId(), uuid);
                 targetPlayer.sendMessage(ChatColor.RED + player.getName() + " 用钩索抓住了你！按3下[Space]脱离。");
             }
             return;
@@ -515,6 +562,21 @@ public class SnapHookListener implements Listener {
         hookStates.remove(uuid);
         cooldowns.put(uuid, System.currentTimeMillis() + NORMAL_COOLDOWN_MS);
         fallProtection.put(uuid, System.currentTimeMillis() + FALL_PROTECTION_MS);
+
+        if (s.pullEntity) {
+            Entity target = Bukkit.getEntity(s.targetEntityId);
+            if (target != null) {
+                target.setVelocity(new Vector(0, 0, 0));
+                if (target instanceof Player targetPlayer) {
+                    escapeCounts.remove(targetPlayer.getUniqueId());
+                    pullTargetToHooker.remove(targetPlayer.getUniqueId());
+                    targetPlayer.sendActionBar(ChatColor.YELLOW + "按3下[Space]脱离, 0/3");
+                }
+            }
+            player.sendActionBar(ChatColor.GREEN + "已钩回目标");
+            return;
+        }
+
         Vector settle = s.target.toVector().subtract(player.getLocation().toVector());
         if (settle.lengthSquared() > 0.01) settle.normalize().multiply(0.35);
         settle.setY(Math.max(settle.getY(), ARRIVE_POP_UP_SPEED));
@@ -528,7 +590,12 @@ public class SnapHookListener implements Listener {
         player.removePotionEffect(PotionEffectType.SPEED);
         hookStates.remove(player.getUniqueId());
         cooldowns.put(player.getUniqueId(), System.currentTimeMillis() + NORMAL_COOLDOWN_MS);
-        player.setVelocity(new Vector(0, 0, 0));
+        if (s.pullEntity) {
+            Entity target = Bukkit.getEntity(s.targetEntityId);
+            if (target != null) target.setVelocity(new Vector(0, 0, 0));
+        } else {
+            player.setVelocity(new Vector(0, 0, 0));
+        }
         player.playSound(player.getLocation(), Sound.BLOCK_CHAIN_BREAK, 0.6f, 1.0f);
         player.sendActionBar(ChatColor.RED + "钩索已取消");
     }
@@ -568,7 +635,13 @@ public class SnapHookListener implements Listener {
         Player player = Bukkit.getPlayer(uuid);
         HookState s = hookStates.get(uuid);
         if (player != null) {
-            if (s != null) restoreStateFlight(player, s);
+            if (s != null) {
+                restoreStateFlight(player, s);
+                if (s.pullEntity && s.targetEntityId != null) {
+                    escapeCounts.remove(s.targetEntityId);
+                    pullTargetToHooker.remove(s.targetEntityId);
+                }
+            }
             player.removePotionEffect(PotionEffectType.SPEED);
         }
         hookStates.remove(uuid);
@@ -576,6 +649,7 @@ public class SnapHookListener implements Listener {
         failCooldowns.remove(uuid);
         fallProtection.remove(uuid);
         escapeCounts.remove(uuid);
+        pullTargetToHooker.remove(uuid);
     }
 
     private boolean handleEscapePress(Player player) {
@@ -584,6 +658,12 @@ public class SnapHookListener implements Listener {
         count++;
         if (count >= 3) {
             escapeCounts.remove(player.getUniqueId());
+            UUID hookerId = pullTargetToHooker.remove(player.getUniqueId());
+            if (hookerId != null) {
+                Player hooker = Bukkit.getPlayer(hookerId);
+                HookState s = hookStates.get(hookerId);
+                if (hooker != null && s != null) cancelPull(hooker, s);
+            }
             player.sendActionBar(ChatColor.GREEN + "已脱离！");
             player.sendMessage(ChatColor.GREEN + "已挣脱钩索。");
             return true;

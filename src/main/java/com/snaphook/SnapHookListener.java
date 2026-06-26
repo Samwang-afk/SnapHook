@@ -351,6 +351,7 @@ public class SnapHookListener implements Listener {
             RayTraceResult entityHit = world.rayTraceEntities(eye, dir, maxDist, 0.2,
                     e -> isHookableEntity(e, uuid));
             if (entityHit == null) {
+                cooldowns.put(uuid, System.currentTimeMillis() + NORMAL_COOLDOWN_MS);
                 player.sendActionBar(ChatColor.RED + "实体模式：无有效目标");
                 player.playSound(player.getLocation(), Sound.BLOCK_CHAIN_BREAK, 0.6f, 1.0f);
                 return;
@@ -560,7 +561,7 @@ public class SnapHookListener implements Listener {
         restoreStateFlight(player, s);
         player.removePotionEffect(PotionEffectType.SPEED);
         hookStates.remove(uuid);
-        cooldowns.put(uuid, System.currentTimeMillis() + NORMAL_COOLDOWN_MS);
+        cooldowns.put(uuid, System.currentTimeMillis() + (long) (NORMAL_COOLDOWN_MS * 0.30));
         fallProtection.put(uuid, System.currentTimeMillis() + FALL_PROTECTION_MS);
 
         if (s.pullEntity) {
@@ -606,7 +607,7 @@ public class SnapHookListener implements Listener {
         if (s != null) restoreStateFlight(player, s);
         player.removePotionEffect(PotionEffectType.SPEED);
         hookStates.remove(uuid);
-        cooldowns.put(uuid, System.currentTimeMillis() + (long) (NORMAL_COOLDOWN_MS * 0.30));
+        cooldowns.put(uuid, System.currentTimeMillis() + NORMAL_COOLDOWN_MS);
         fallProtection.put(uuid, System.currentTimeMillis() + FALL_PROTECTION_MS);
         Vector velocity = player.getVelocity();
         if (velocity.lengthSquared() < 0.04) velocity = player.getLocation().getDirection().multiply(1.2);
